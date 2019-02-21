@@ -97,8 +97,10 @@ func acceptRegexRange(name, prefix string, regex *regexp.Regexp, min, max int64)
 //
 //=============
 
-func (t *targetrunner) doListEvictDelete(ct context.Context, evict bool, objs []string, bucket string, deadline time.Duration, done chan struct{}) error {
+func (t *targetrunner) doListEvictDelete(ct context.Context, evict bool, objs []string,
+	bucket string, deadline time.Duration, done chan struct{}) error {
 	xdel := t.xactions.newEvictDelete(evict)
+	bucketProvider := "" // FIXME
 	defer func() {
 		if done != nil {
 			done <- struct{}{}
@@ -120,7 +122,15 @@ func (t *targetrunner) doListEvictDelete(ct context.Context, evict bool, objs []
 		if !absdeadline.IsZero() && time.Now().After(absdeadline) {
 			continue
 		}
-		err := t.objDelete(ct, bucket, objname, evict)
+		lom := &cluster.LOM{T: t, Bucket: bucket, Objname: objname}
+		if errstr := lom.Fill(bucketProvider, cluster.LomFstat|cluster.LomCopy); errstr != "" {
+			glog.Errorln(errstr)
+			continue
+		}
+		if !lom.Exists() {
+			continue
+		}
+		err := t.objDelete(ct, lom, evict)
 		if err != nil {
 			return err
 		}
@@ -129,11 +139,13 @@ func (t *targetrunner) doListEvictDelete(ct context.Context, evict bool, objs []
 	return nil
 }
 
-func (t *targetrunner) doListDelete(ct context.Context, objs []string, bucket string, deadline time.Duration, done chan struct{}) error {
+func (t *targetrunner) doListDelete(ct context.Context, objs []string, bucket string,
+	deadline time.Duration, done chan struct{}) error {
 	return t.doListEvictDelete(ct, false /* evict */, objs, bucket, deadline, done)
 }
 
-func (t *targetrunner) doListEvict(ct context.Context, objs []string, bucket string, deadline time.Duration, done chan struct{}) error {
+func (t *targetrunner) doListEvict(ct context.Context, objs []string, bucket string,
+	deadline time.Duration, done chan struct{}) error {
 	return t.doListEvictDelete(ct, true /* evict */, objs, bucket, deadline, done)
 }
 

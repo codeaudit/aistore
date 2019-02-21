@@ -592,7 +592,7 @@ func (t *targetrunner) verifyProxyRedirection(w http.ResponseWriter, r *http.Req
 		t.invalmsghdlr(w, r, fmt.Sprintf("%s %s request from an unknown proxy/gateway ID '%s' - Smap out of sync?", r.Method, action, pid))
 		return false
 	}
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("%s %s %s/%s <= %s", r.Method, action, bucket, objname, pid)
 	}
 	return true
@@ -648,7 +648,7 @@ func (t *targetrunner) httpobjget(w http.ResponseWriter, r *http.Request) {
 	// if !dryRun.disk && lom.Exists() {
 	// 	if x := query.Get(cmn.URLParamReadahead); x != "" {
 
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		pid := query.Get(cmn.URLParamProxyID)
 		glog.Infof("%s %s <= %s", r.Method, lom, pid)
 	}
@@ -744,7 +744,7 @@ func (t *targetrunner) restoreObjLBNeigh(lom *cluster.LOM, r *http.Request, star
 			lom.FQN = oldFQN
 			lom.Size = oldSize
 			lom.SetExists(true)
-			if glog.V(4) {
+			if glog.FastV(4, glog.SmoduleAIS) {
 				glog.Infof("restored from LFS %s (%s)", lom, cmn.B2S(oldSize, 1))
 			}
 			return
@@ -760,7 +760,7 @@ func (t *targetrunner) restoreObjLBNeigh(lom *cluster.LOM, r *http.Request, star
 		}
 	}
 	if aborted || running || t.gfn.lookup {
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Infof("neighbor lookup: aborted=%t, running=%t, lookup=%t", aborted, running, t.gfn.lookup)
 		}
 		// retry in case the object is being moved right now
@@ -771,13 +771,13 @@ func (t *targetrunner) restoreObjLBNeigh(lom *cluster.LOM, r *http.Request, star
 				continue
 			}
 			lom.RestoredReceived(props)
-			if glog.V(4) {
+			if glog.FastV(4, glog.SmoduleAIS) {
 				glog.Infof("restored from a neighbor: %s (%s)", lom, cmn.B2S(lom.Size, 1))
 			}
 			return
 		}
 	} else if t.getFromTier(lom) {
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Infof("restored from tier: %s (%s)", lom, cmn.B2S(lom.Size, 1))
 		}
 		return
@@ -785,7 +785,7 @@ func (t *targetrunner) restoreObjLBNeigh(lom *cluster.LOM, r *http.Request, star
 
 	// restore from existing EC slices if possible
 	if ecErr := t.ecmanager.RestoreObject(lom); ecErr == nil {
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Infof("%s/%s is restored successfully", lom.Bucket, lom.Objname)
 		}
 		lom.Fill(bucketProvider, cluster.LomFstat|cluster.LomAtime)
@@ -1064,7 +1064,7 @@ func (t *targetrunner) httpbckdelete(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				t.invalmsghdlr(w, r, fmt.Sprintf("Failed to delete files: %v", err))
 			} else {
-				if bool(glog.V(4)) {
+				if glog.FastV(4, glog.SmoduleAIS) {
 					glog.Infof("DELETE list|range: %s, %d µs", bucket, int64(time.Since(started)/time.Microsecond))
 				}
 			}
@@ -1084,7 +1084,6 @@ func (t *targetrunner) httpobjdelete(w http.ResponseWriter, r *http.Request) {
 		msg     cmn.ActionMsg
 		started = time.Now()
 		evict   bool
-		ok      = true
 	)
 	bucketProvider := r.URL.Query().Get(cmn.URLParamBucketProvider)
 	apitems, err := t.checkRESTItems(w, r, 2, false, cmn.Version, cmn.Objects)
@@ -1095,49 +1094,52 @@ func (t *targetrunner) httpobjdelete(w http.ResponseWriter, r *http.Request) {
 	if !t.validatebckname(w, r, bucket) {
 		return
 	}
-
+	if objname == "" {
+		t.invalmsghdlr(w, r, "no object name")
+		return
+	}
 	b, err := ioutil.ReadAll(r.Body)
-	defer func() {
-		if ok && err == nil && bool(glog.V(4)) {
-			glog.Infof("DELETE: %s/%s, %d µs", bucket, objname, int64(time.Since(started)/time.Microsecond))
-		}
-	}()
-	if err == nil && len(b) > 0 {
-		err = jsoniter.Unmarshal(b, &msg)
-		if err == nil {
-			evict = (msg.Action == cmn.ActEvictObjects)
-		}
-	} else if err != nil {
-		s := fmt.Sprintf("objDelete: Failed to read %s request, err: %v", r.Method, err)
+	if err != nil {
+		s := err.Error()
 		if err == io.EOF {
-			trailer := r.Trailer.Get("Error")
-			if trailer != "" {
-				s = fmt.Sprintf("objDelete: Failed to read %s request, err: %v, trailer: %s",
-					r.Method, err, trailer)
+			if trailer := r.Trailer.Get("Error"); trailer != "" {
+				s += " [trailer: " + trailer + "]"
 			}
 		}
 		t.invalmsghdlr(w, r, s)
 		return
 	}
-	if objname != "" {
-		lom := &cluster.LOM{T: t, Bucket: bucket, Objname: objname}
-		if errstr := lom.Fill(bucketProvider, 0); errstr != "" {
-			t.invalmsghdlr(w, r, errstr)
+	if len(b) > 0 {
+		err = jsoniter.Unmarshal(b, &msg)
+		if err == nil {
+			evict = (msg.Action == cmn.ActEvictObjects)
+		} else {
+			t.invalmsghdlr(w, r, err.Error())
 			return
 		}
-		err := t.objDelete(t.contextWithAuth(r), bucket, objname, evict)
-		if err != nil {
-			s := fmt.Sprintf("Error deleting %s/%s: %v", bucket, objname, err)
-			t.invalmsghdlr(w, r, s)
-			return
-		}
-		// EC cleanup if EC is enabled
-		t.ecmanager.CleanupObject(lom)
+	}
+	lom := &cluster.LOM{T: t, Bucket: bucket, Objname: objname}
+	if errstr := lom.Fill(bucketProvider, cluster.LomFstat|cluster.LomCopy); errstr != "" {
+		t.invalmsghdlr(w, r, errstr)
 		return
 	}
-	s := fmt.Sprintf("Invalid API request: no object name or message body")
-	t.invalmsghdlr(w, r, s)
-	ok = false
+	if !lom.Exists() {
+		if glog.FastV(4, glog.SmoduleAIS) {
+			glog.Infof("%s/%s %s, nothing to do", bucket, objname, cmn.DoesNotExist)
+		}
+		return
+	}
+	err = t.objDelete(t.contextWithAuth(r), lom, evict)
+	if err != nil {
+		s := fmt.Sprintf("Error deleting %s/%s: %v", bucket, objname, err)
+		t.invalmsghdlr(w, r, s)
+		return
+	}
+	// EC cleanup if EC is enabled
+	t.ecmanager.CleanupObject(lom)
+	if glog.FastV(4, glog.SmoduleAIS) {
+		glog.Infof("DELETE: %s/%s, %d µs", bucket, objname, int64(time.Since(started)/time.Microsecond))
+	}
 }
 
 // POST /v1/buckets/bucket-name
@@ -1203,7 +1205,7 @@ func (t *targetrunner) httpbckpost(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			delta := time.Since(started)
 			t.statsif.AddMany(stats.NamedVal64{stats.ListCount, 1}, stats.NamedVal64{stats.ListLatency, int64(delta)})
-			if glog.V(4) {
+			if glog.FastV(4, glog.SmoduleAIS) {
 				glog.Infof("LIST %s: %s, %d µs", tag, lbucket, int64(delta/time.Microsecond))
 			}
 		}
@@ -1257,7 +1259,7 @@ func (t *targetrunner) httpbckhead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		pid := query.Get(cmn.URLParamProxyID)
 		glog.Infof("%s %s <= %s", r.Method, bucket, pid)
 	}
@@ -1353,7 +1355,7 @@ func (t *targetrunner) httpobjhead(w http.ResponseWriter, r *http.Request) {
 		t.invalmsghdlr(w, r, errstr)
 		return
 	}
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		pid := query.Get(cmn.URLParamProxyID)
 		glog.Infof("%s %s <= %s", r.Method, lom, pid)
 	}
@@ -1368,7 +1370,7 @@ func (t *targetrunner) httpobjhead(w http.ResponseWriter, r *http.Request) {
 		objmeta = make(cmn.SimpleKVs)
 		objmeta[cmn.HeaderObjSize] = strconv.FormatInt(lom.Size, 10)
 		objmeta[cmn.HeaderObjVersion] = lom.Version
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Infof("%s(%s), ver=%s", lom, cmn.B2S(lom.Size, 1), lom.Version)
 		}
 	} else {
@@ -1465,11 +1467,11 @@ func (t *targetrunner) healthHandler(w http.ResponseWriter, r *http.Request) {
 	from := query.Get(cmn.URLParamFromID)
 	smap := t.smapowner.get()
 	if smap.GetProxy(from) != nil {
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Infof("%s: health-ping from p[%s]", pname(t.si), from)
 		}
 		t.keepalive.heardFrom(from, false)
-	} else if glog.V(4) {
+	} else if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("%s: health-ping from %s", tname(t.si), smap.printname(from))
 	}
 }
@@ -1627,7 +1629,7 @@ func (t *targetrunner) getFromNeighbor(r *http.Request, lom *cluster.LOM) (remot
 		errstr = fmt.Sprintf("Failed cluster-wide lookup %s", lom)
 		return
 	}
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("Found %s at %s", lom, neighsi)
 	}
 
@@ -1686,7 +1688,7 @@ func (t *targetrunner) getFromNeighbor(r *http.Request, lom *cluster.LOM) (remot
 	if errstr = remoteLOM.Persist(); errstr != "" {
 		return
 	}
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("Success: %s (%s, %s) from %s", remoteLOM, cmn.B2S(remoteLOM.Size, 1), remoteLOM.Cksum, neighsi)
 	}
 	return
@@ -2006,7 +2008,7 @@ func (t *targetrunner) listbucket(w http.ResponseWriter, r *http.Request, bucket
 		errcode int
 	)
 	query := r.URL.Query()
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		pid := query.Get(cmn.URLParamProxyID)
 		glog.Infof("%s %s <= %s", r.Method, bucket, pid)
 	}
@@ -2280,7 +2282,7 @@ func (t *targetrunner) doReplicationPut(r *http.Request, bucket, objname, replic
 
 	delta := time.Since(started)
 	t.statsif.AddMany(stats.NamedVal64{stats.ReplPutCount, 1}, stats.NamedVal64{stats.ReplPutLatency, int64(delta)})
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("Replication PUT: %s/%s, %d µs", bucket, objname, int64(delta/time.Microsecond))
 	}
 	return ""
@@ -2308,7 +2310,7 @@ func (roi *recvObjInfo) recv() (err error, errCode int) {
 	if roi.lom.Exists() && roi.cksumToCheck != nil {
 		if errstr := roi.lom.Fill(roi.bucketProvider, cluster.LomCksum); errstr == "" {
 			if cmn.EqCksum(roi.lom.Cksum, roi.cksumToCheck) {
-				if glog.V(4) {
+				if glog.FastV(4, glog.SmoduleAIS) {
 					glog.Infof("%s is valid %s: PUT is a no-op", roi.lom, roi.cksumToCheck)
 				}
 				io.Copy(ioutil.Discard, roi.r) // drain the reader
@@ -2452,7 +2454,7 @@ func (t *targetrunner) recvRebalanceObj(w http.ResponseWriter, hdr transport.Hea
 	roi.lom.Atime = time.Unix(0, hdr.ObjAttrs.Atime)
 	roi.lom.Version = hdr.ObjAttrs.Version
 
-	if glog.V(4) {
+	if glog.FastV(4, glog.SmoduleAIS) {
 		glog.Infof("Rebalance %s from %s", roi.lom, hdr.Opaque)
 	}
 
@@ -2464,20 +2466,16 @@ func (t *targetrunner) recvRebalanceObj(w http.ResponseWriter, hdr transport.Hea
 	t.statsif.AddMany(stats.NamedVal64{stats.RxCount, 1}, stats.NamedVal64{stats.RxSize, hdr.ObjAttrs.Size})
 }
 
-func (t *targetrunner) objDelete(ct context.Context, bucket, objname string, evict bool) error {
+func (t *targetrunner) objDelete(ct context.Context, lom *cluster.LOM, evict bool) error {
 	var (
 		errstr  string
 		errcode int
-		lom     = &cluster.LOM{T: t, Bucket: bucket, Objname: objname}
 	)
-	if errstr = lom.Fill("", 0); errstr != "" {
-		return errors.New(errstr)
-	}
 	t.rtnamemap.Lock(lom.Uname, true)
 	defer t.rtnamemap.Unlock(lom.Uname, true)
 
 	if !lom.BckIsLocal && !evict {
-		if errstr, errcode = getcloudif().deleteobj(ct, bucket, objname); errstr != "" {
+		if errstr, errcode = getcloudif().deleteobj(ct, lom.Bucket, lom.Objname); errstr != "" {
 			if errcode == 0 {
 				return fmt.Errorf("%s", errstr)
 			}
@@ -2485,19 +2483,13 @@ func (t *targetrunner) objDelete(ct context.Context, bucket, objname string, evi
 		}
 		t.statsif.Add(stats.DeleteCount, 1)
 	}
-
-	_ = lom.Fill("", cluster.LomFstat|cluster.LomCopy) // ignore fstat errors
-	if !lom.Exists() {
-		return nil
-	}
 	if !(evict && lom.BckIsLocal) {
-		// Don't evict from a local bucket (this would be deletion)
+		// don't evict from a local bucket (this would be deletion)
 		if lom.HasCopy() {
 			if errstr := lom.DelCopy(); errstr != "" {
 				return errors.New(errstr)
 			}
 		}
-
 		if err := os.Remove(lom.FQN); err != nil {
 			return err
 		} else if evict {
@@ -2797,7 +2789,7 @@ func (t *targetrunner) httpdaesetprimaryproxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if prepare {
-		if glog.V(4) {
+		if glog.FastV(4, glog.SmoduleAIS) {
 			glog.Info("Preparation step: do nothing")
 		}
 		return
