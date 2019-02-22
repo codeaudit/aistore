@@ -4,6 +4,7 @@
 - [Notation](#notation)
 - [Overview](#overview)
 - [API Reference](#api-reference)
+- [Bucket Provider](#bucket-provider)
 - [Querying information](#querying-information)
 - [Example: querying runtime statistics](#example-querying-runtime-statistics)
 
@@ -102,13 +103,15 @@ ___
 
 <a name="ft7">7</a>: The difference between "Set bucket props" and "Set single bucket prop" is that the single property action requires non-empty `name` and `value`whereby the `value` must be a string. In the case of "Set bucket props", the `value` must be correctly-filled `cmn.BucketProps` structure. For the list of supported propertes, see [API constants](/cmn/api.go) and look for a section titled 'Header Key enum'[↩](#a7)
 
-#### Optional Parameters
+### Bucket Provider
 
-In situations where users have a cloud bucket and a local bucket with the same name, users can add the `?bprovider=(local|cloud)` query string in GET requests to specify the location of the object they want to retrieve.
+Any storage bucket that AIS handles may originate in a 3rd party Cloud, or be created (and subsequently filled-in) in the AIS itself. But what if there's a pair of buckets, a Cloud-based and, separately, a local one, that happen to share the same name? To resolve the potential naming conflict, AIS 2.0 introduces the concept of *bucket provider*.
+
+> Bucket provider is realized as an optional parameter in the GET, PUT, DELETE and [Range/List](batch.md) operations with (currently) only two supported enumerated values: `local` and `cloud`.
+
+In all those cases users can add an optional `?bprovider=local` or `?bprovider=cloud` query to the GET (PUT, DELETE, List/Range) request.
+
 Example: `curl -L -X GET 'http://G/v1/objects/myS3bucket/myobject?bprovider=local'`
-
-> If `bprovider` is not specified and there is a local bucket and cloud bucket with the same name, it will default to `local`.
-
 
 ### Querying information
 
