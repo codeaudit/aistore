@@ -2478,7 +2478,13 @@ func (t *targetrunner) objDelete(ct context.Context, lom *cluster.LOM, evict boo
 	t.rtnamemap.Lock(lom.Uname, true)
 	defer t.rtnamemap.Unlock(lom.Uname, true)
 
-	if !lom.BckIsLocal && !evict {
+	delFromCloud := !lom.BckIsLocal && !evict
+	if errstr := lom.Fill("", cluster.LomFstat); errstr != "" {
+		return errors.New(errstr)
+	}
+	delFromAIS := lom.Exists()
+
+	if delFromCloud {
 		if errstr, errcode = getcloudif().deleteobj(ct, lom.Bucket, lom.Objname); errstr != "" {
 			if errcode == 0 {
 				return fmt.Errorf("%s", errstr)
@@ -2487,8 +2493,7 @@ func (t *targetrunner) objDelete(ct context.Context, lom *cluster.LOM, evict boo
 		}
 		t.statsif.Add(stats.DeleteCount, 1)
 	}
-	if !(evict && lom.BckIsLocal) {
-		// don't evict from a local bucket (this would be deletion)
+	if delFromAIS {
 		if lom.HasCopy() {
 			if errstr := lom.DelCopy(); errstr != "" {
 				return errors.New(errstr)
@@ -2497,6 +2502,7 @@ func (t *targetrunner) objDelete(ct context.Context, lom *cluster.LOM, evict boo
 		if err := os.Remove(lom.FQN); err != nil {
 			return err
 		} else if evict {
+			cmn.Assert(!lom.BckIsLocal)
 			t.statsif.AddMany(
 				stats.NamedVal64{stats.LruEvictCount, 1},
 				stats.NamedVal64{stats.LruEvictSize, lom.Size})

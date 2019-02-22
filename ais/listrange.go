@@ -127,7 +127,7 @@ func (t *targetrunner) doListEvictDelete(ct context.Context, evict bool, objs []
 			glog.Errorln(errstr)
 			continue
 		}
-		if !lom.Exists() {
+		if evict && !lom.Exists() {
 			continue
 		}
 		err := t.objDelete(ct, lom, evict)
