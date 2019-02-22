@@ -309,7 +309,7 @@ func propsCleanupObjects(t *testing.T, proxyURL, bucket string, newVersions map[
 	wg := &sync.WaitGroup{}
 	for objname := range newVersions {
 		wg.Add(1)
-		go tutils.Del(proxyURL, bucket, objname, wg, errCh, !testing.Verbose())
+		go tutils.Del(proxyURL, bucket, objname, "", wg, errCh, !testing.Verbose())
 	}
 	wg.Wait()
 	selectErr(errCh, "delete", t, abortonerr)

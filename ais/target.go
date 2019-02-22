@@ -472,6 +472,7 @@ func (t *targetrunner) PrefetchQueueLen() int { return len(t.prefetchQueue) }
 
 func (t *targetrunner) Prefetch() {
 	xpre := t.xactions.renewPrefetch()
+
 	if xpre == nil {
 		return
 	}
@@ -482,13 +483,12 @@ loop:
 			if !fwd.deadline.IsZero() && time.Now().After(fwd.deadline) {
 				continue
 			}
-			bucket := fwd.bucket
-			bucketmd := t.bmdowner.get()
-			if bckIsLocal := bucketmd.IsLocal(bucket); bckIsLocal {
-				glog.Errorf("prefetch: bucket  %s is local, nothing to do", bucket)
+			bckIsLocal, _ := t.validateBucketProvider(fwd.bucketProvider, fwd.bucket)
+			if bckIsLocal {
+				glog.Errorf("prefetch: bucket %s is local, nothing to do", fwd.bucket)
 			} else {
 				for _, objname := range fwd.objnames {
-					t.prefetchMissing(fwd.ctx, objname, bucket)
+					t.prefetchMissing(fwd.ctx, objname, fwd.bucket, fwd.bucketProvider)
 				}
 			}
 			// Signal completion of prefetch
@@ -1031,6 +1031,11 @@ func (t *targetrunner) httpbckdelete(w http.ResponseWriter, r *http.Request) {
 	if !t.validatebckname(w, r, bucket) {
 		return
 	}
+	bucketProvider := r.URL.Query().Get(cmn.URLParamBucketProvider)
+	if _, errstr := t.validateBucketProvider(bucketProvider, bucket); errstr != "" {
+		t.invalmsghdlr(w, r, errstr)
+		return
+	}
 	b, err := ioutil.ReadAll(r.Body)
 
 	if err == nil && len(b) > 0 {
@@ -1051,16 +1056,11 @@ func (t *targetrunner) httpbckdelete(w http.ResponseWriter, r *http.Request) {
 
 	switch msgInt.Action {
 	case cmn.ActEvictCB:
-		bucketmd := t.bmdowner.get()
-		if bucketmd.IsLocal(bucket) {
-			t.invalmsghdlr(w, r, fmt.Sprintf("Bucket %s appears to be local (not cloud)", bucket))
-			return
-		}
-
+		// Validation handled in proxy.go
 		fs.Mountpaths.EvictCloudBucket(bucket)
 	case cmn.ActDelete, cmn.ActEvictObjects:
 		if len(b) > 0 { // must be a List/Range request
-			err := t.listRangeOperation(r, apitems, msgInt)
+			err := t.listRangeOperation(r, apitems, bucketProvider, msgInt)
 			if err != nil {
 				t.invalmsghdlr(w, r, fmt.Sprintf("Failed to delete files: %v", err))
 			} else {
@@ -1110,13 +1110,11 @@ func (t *targetrunner) httpobjdelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(b) > 0 {
-		err = jsoniter.Unmarshal(b, &msg)
-		if err == nil {
-			evict = (msg.Action == cmn.ActEvictObjects)
-		} else {
+		if err = jsoniter.Unmarshal(b, &msg); err != nil {
 			t.invalmsghdlr(w, r, err.Error())
 			return
 		}
+		evict = (msg.Action == cmn.ActEvictObjects)
 	}
 	lom := &cluster.LOM{T: t, Bucket: bucket, Objname: objname}
 	if errstr := lom.Fill(bucketProvider, cluster.LomFstat|cluster.LomCopy); errstr != "" {
@@ -1145,7 +1143,6 @@ func (t *targetrunner) httpobjdelete(w http.ResponseWriter, r *http.Request) {
 // POST /v1/buckets/bucket-name
 func (t *targetrunner) httpbckpost(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
-	bucketProvider := r.URL.Query().Get(cmn.URLParamBucketProvider)
 	var msgInt actionMsgInternal
 	if cmn.ReadJSON(w, r, &msgInt) != nil {
 		return
@@ -1155,19 +1152,27 @@ func (t *targetrunner) httpbckpost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bucket := apitems[0]
+	bucketProvider := r.URL.Query().Get(cmn.URLParamBucketProvider)
+	if _, errstr := t.validateBucketProvider(bucketProvider, bucket); errstr != "" {
+		t.invalmsghdlr(w, r, errstr)
+		return
+	}
+
 	t.ensureLatestMD(msgInt)
 
 	switch msgInt.Action {
 	case cmn.ActPrefetch:
-		if err := t.listRangeOperation(r, apitems, msgInt); err != nil {
+		// validation done in proxy.go
+		if err := t.listRangeOperation(r, apitems, bucketProvider, msgInt); err != nil {
 			t.invalmsghdlr(w, r, fmt.Sprintf("Failed to prefetch files: %v", err))
-		}
-	case cmn.ActRenameLB:
-		lbucket := apitems[0]
-		if !t.validatebckname(w, r, lbucket) {
 			return
 		}
-		bucketFrom, bucketTo := lbucket, msgInt.Name
+	case cmn.ActRenameLB:
+		if !t.validatebckname(w, r, bucket) {
+			return
+		}
+		bucketFrom, bucketTo := bucket, msgInt.Name
 
 		t.bmdowner.Lock() // lock#1 begin
 
@@ -1196,17 +1201,16 @@ func (t *targetrunner) httpbckpost(w http.ResponseWriter, r *http.Request) {
 
 		glog.Infof("renamed local bucket %s => %s, %s v%d", bucketFrom, bucketTo, bmdTermName, clone.version())
 	case cmn.ActListObjects:
-		lbucket := apitems[0]
-		if !t.validatebckname(w, r, lbucket) {
+		if !t.validatebckname(w, r, bucket) {
 			return
 		}
 		// list the bucket and return
-		tag, ok := t.listbucket(w, r, lbucket, bucketProvider, &msgInt)
+		tag, ok := t.listbucket(w, r, bucket, bucketProvider, &msgInt)
 		if ok {
 			delta := time.Since(started)
 			t.statsif.AddMany(stats.NamedVal64{stats.ListCount, 1}, stats.NamedVal64{stats.ListLatency, int64(delta)})
 			if glog.FastV(4, glog.SmoduleAIS) {
-				glog.Infof("LIST %s: %s, %d µs", tag, lbucket, int64(delta/time.Microsecond))
+				glog.Infof("LIST %s: %s, %d µs", tag, bucket, int64(delta/time.Microsecond))
 			}
 		}
 	case cmn.ActRechecksum:

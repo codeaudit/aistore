@@ -181,7 +181,7 @@ func TestCloudListBucketGetTargetURL(t *testing.T) {
 		for i := 0; i < numberOfFiles; i++ {
 			files[i] = path.Join(prefix, <-fileNameCh)
 		}
-		err := tutils.DeleteList(proxyURL, bucketName, files, true, 0)
+		err := tutils.DeleteList(proxyURL, bucketName, cmn.CloudBs, files, true, 0)
 		if err != nil {
 			t.Error("Unable to delete files during cleanup from cloud bucket.")
 		}
@@ -444,7 +444,7 @@ func TestRenameObjects(t *testing.T) {
 		wg := &sync.WaitGroup{}
 		for _, newObj := range bnewnames {
 			wg.Add(1)
-			go tutils.Del(proxyURL, RenameLocalBucketName, newObj, wg, errCh, !testing.Verbose())
+			go tutils.Del(proxyURL, RenameLocalBucketName, newObj, "", wg, errCh, !testing.Verbose())
 		}
 
 		if usingFile {
@@ -633,7 +633,7 @@ func TestRebalance(t *testing.T) {
 		}
 
 		wg.Add(1)
-		go tutils.Del(proxyURL, clibucket, "smoke/"+fname, wg, errCh, !testing.Verbose())
+		go tutils.Del(proxyURL, clibucket, "smoke/"+fname, "", wg, errCh, !testing.Verbose())
 	}
 	wg.Wait()
 	selectErr(errCh, "delete", t, abortonerr)
@@ -956,7 +956,7 @@ func TestDeleteList(t *testing.T) {
 	tutils.Logf("PUT done.\n")
 
 	// 2. Delete the objects
-	err = tutils.DeleteList(proxyURL, clibucket, files, true, 0)
+	err = tutils.DeleteList(proxyURL, clibucket, "", files, true, 0)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1092,7 +1092,7 @@ func TestDeleteRange(t *testing.T) {
 	tutils.Logf("PUT done.\n")
 
 	// 2. Delete the small range of objects
-	err = tutils.DeleteRange(proxyURL, clibucket, prefix, regex, smallrange, true, 0)
+	err = tutils.DeleteRange(proxyURL, clibucket, "", prefix, regex, smallrange, true, 0)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1119,7 +1119,7 @@ func TestDeleteRange(t *testing.T) {
 	}
 
 	// 4. Delete the big range of objects
-	err = tutils.DeleteRange(proxyURL, clibucket, prefix, regex, bigrange, true, 0)
+	err = tutils.DeleteRange(proxyURL, clibucket, "", prefix, regex, bigrange, true, 0)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1192,7 +1192,7 @@ func TestStressDeleteRange(t *testing.T) {
 
 	// 2. Delete a range of objects
 	tutils.Logf("Deleting objects in range: %s\n", partial_rnge)
-	err = tutils.DeleteRange(proxyURL, TestLocalBucketName, prefix, regex, partial_rnge, true, 0)
+	err = tutils.DeleteRange(proxyURL, TestLocalBucketName, cmn.LocalBs, prefix, regex, partial_rnge, true, 0)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1222,7 +1222,7 @@ func TestStressDeleteRange(t *testing.T) {
 
 	// 4. Delete the entire range of objects
 	tutils.Logf("Deleting objects in range: %s\n", rnge)
-	err = tutils.DeleteRange(proxyURL, TestLocalBucketName, prefix, regex, rnge, true, 0)
+	err = tutils.DeleteRange(proxyURL, TestLocalBucketName, cmn.LocalBs, prefix, regex, rnge, true, 0)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1264,7 +1264,7 @@ func doRenameRegressionTest(t *testing.T, proxyURL string, rtd regressionTestDat
 		t.Fatalf("renamed local bucket %s does not exist after rename", rtd.renamedBucket)
 	}
 
-	objs, err := tutils.ListObjects(proxyURL, rtd.renamedBucket, "", numPuts+1)
+	objs, err := tutils.ListObjects(proxyURL, rtd.renamedBucket, cmn.LocalBs, "", numPuts+1)
 	tutils.CheckFatal(err, t)
 
 	if len(objs) != numPuts {
@@ -1320,7 +1320,7 @@ func doBucketRegressionTest(t *testing.T, proxyURL string, rtd regressionTestDat
 		}
 
 		wg.Add(1)
-		go tutils.Del(proxyURL, bucket, "smoke/"+fname, wg, errCh, !testing.Verbose())
+		go tutils.Del(proxyURL, bucket, "smoke/"+fname, "", wg, errCh, !testing.Verbose())
 	}
 	wg.Wait()
 	selectErr(errCh, "delete", t, abortonerr)

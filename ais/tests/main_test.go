@@ -278,7 +278,7 @@ func Test_putdeleteRange(t *testing.T) {
 		msg := &cmn.GetMsg{GetPrefix: commonPrefix + "/"}
 		tutils.Logf("%d. %s\n    Prefix: [%s], range: [%s], regexp: [%s]\n", idx+1, test.name, test.prefix, test.rangeStr, test.regexStr)
 
-		err := tutils.DeleteRange(proxyURL, clibucket, test.prefix, test.regexStr, test.rangeStr, true, 0)
+		err := tutils.DeleteRange(proxyURL, clibucket, "", test.prefix, test.regexStr, test.rangeStr, true, 0)
 		if err != nil {
 			t.Error(err)
 		}
@@ -571,6 +571,24 @@ func Test_SameLocalAndCloudBucketname(t *testing.T) {
 			len(dataLocal), len(dataCloud), lenLocal, lenCloud)
 	}
 
+	// Delete
+	err = api.DeleteObject(baseParams, bucketName, fileName, cmn.CloudBs)
+	tutils.CheckFatal(err, t)
+
+	lenLocal, err = api.GetObject(baseParams, bucketName, fileName, api.GetObjectInput{Query: queryLocal})
+	tutils.CheckFatal(err, t)
+
+	// Check that local object still exists
+	if lenLocal != int64(len(dataLocal)) {
+		t.Errorf("Local file %s deleted", fileName)
+	}
+
+	// Check that cloud object is deleted using HeadObject
+	_, err = api.HeadObject(baseParams, bucketName, cmn.CloudBs, fileName)
+	if !strings.Contains(err.Error(), strconv.Itoa(http.StatusNotFound)) {
+		t.Errorf("Cloud file %s not deleted", fileName)
+	}
+
 	// Set Props Object
 	err = api.SetBucketProps(baseParams, bucketName, bucketPropsLocal, queryLocal)
 	tutils.CheckFatal(err, t)
@@ -687,7 +705,7 @@ cleanup:
 		}
 
 		wg.Add(1)
-		go tutils.Del(proxyURL, bucket, fn, wg, errCh, !testing.Verbose())
+		go tutils.Del(proxyURL, bucket, fn, "", wg, errCh, !testing.Verbose())
 	}
 	wg.Wait()
 	selectErr(errCh, "delete", t, false)
@@ -773,7 +791,7 @@ func TestHeadObject(t *testing.T) {
 	}
 
 	propsExp := &cmn.ObjectProps{Size: objSize, Version: "1"}
-	props, err := api.HeadObject(tutils.DefaultBaseAPIParams(t), TestLocalBucketName, objName)
+	props, err := api.HeadObject(tutils.DefaultBaseAPIParams(t), TestLocalBucketName, "", objName)
 	if err != nil {
 		t.Errorf("api.HeadObject failed, err = %v", err)
 	}
@@ -782,7 +800,7 @@ func TestHeadObject(t *testing.T) {
 		t.Errorf("Returned object props not correct. Expected: %v, actual: %v", propsExp, props)
 	}
 
-	_, err = api.HeadObject(tutils.DefaultBaseAPIParams(t), TestLocalBucketName, "this_object_should_not_exist")
+	_, err = api.HeadObject(tutils.DefaultBaseAPIParams(t), TestLocalBucketName, "", "this_object_should_not_exist")
 	if err == nil {
 		t.Errorf("Expected non-nil error (404) from api.HeadObject, received nil error")
 	}
@@ -819,7 +837,7 @@ func TestHeadObjectCheckCached(t *testing.T) {
 		t.Error("Expected object to be cached, got false from tutils.IsCached")
 	}
 
-	err = tutils.Del(proxyURL, clibucket, fileName, nil, nil, true)
+	err = tutils.Del(proxyURL, clibucket, fileName, "", nil, nil, true)
 	tutils.CheckFatal(err, t)
 
 	b, err = tutils.IsCached(proxyURL, clibucket, fileName)
@@ -946,7 +964,7 @@ func deleteFiles(proxyURL string, keynames <-chan string, t *testing.T, wg *sync
 	dwg := &sync.WaitGroup{}
 	for keyname := range keynames {
 		dwg.Add(1)
-		go tutils.Del(proxyURL, bucket, keyname, dwg, errCh, true)
+		go tutils.Del(proxyURL, bucket, keyname, "", dwg, errCh, true)
 	}
 	dwg.Wait()
 }
@@ -1114,7 +1132,7 @@ cleanup:
 		}
 
 		wg.Add(1)
-		go tutils.Del(proxyURL, clibucket, fn, wg, errCh, !testing.Verbose())
+		go tutils.Del(proxyURL, clibucket, fn, "", wg, errCh, !testing.Verbose())
 	}
 	wg.Wait()
 	selectErr(errCh, "delete", t, false)
@@ -1135,6 +1153,7 @@ func Test_evictCloudBucket(t *testing.T) {
 		sgl        *memsys.SGL
 		proxyURL   = getPrimaryURL(t, proxyURLReadOnly)
 		bProps     *cmn.BucketProps
+		query      = url.Values{}
 	)
 
 	if !isCloudBucket(t, proxyURL, clibucket) {
@@ -1151,7 +1170,7 @@ func Test_evictCloudBucket(t *testing.T) {
 		//cleanup
 		for _, fn := range fileslist {
 			wg.Add(1)
-			go tutils.Del(proxyURL, bucket, fn, wg, errCh, !testing.Verbose())
+			go tutils.Del(proxyURL, bucket, fn, "", wg, errCh, !testing.Verbose())
 		}
 		wg.Wait()
 		selectErr(errCh, "delete", t, false)
@@ -1184,8 +1203,8 @@ func Test_evictCloudBucket(t *testing.T) {
 	if !bProps.MirrorEnabled {
 		t.Fatalf("Test property not changed")
 	}
-
-	api.EvictCloudBucket(tutils.DefaultBaseAPIParams(t), bucket)
+	query.Add(cmn.URLParamBucketProvider, cmn.CloudBs)
+	api.EvictCloudBucket(tutils.DefaultBaseAPIParams(t), bucket, query)
 
 	for _, fname := range fileslist {
 		if b, _ := tutils.IsCached(proxyURL, bucket, fname); b {
@@ -1395,7 +1414,7 @@ cleanup:
 	}
 
 	wg.Add(1)
-	go tutils.Del(proxyURL, clibucket, filepath.Join(RangeGetStr, fileName), wg, errCh, !testing.Verbose())
+	go tutils.Del(proxyURL, clibucket, filepath.Join(RangeGetStr, fileName), "", wg, errCh, !testing.Verbose())
 	wg.Wait()
 	selectErr(errCh, "delete", t, false)
 	setClusterConfig(t, proxyURL, "enable_read_range_checksum", oldEnableReadRangeChecksum)
@@ -1631,7 +1650,7 @@ func deletefromfilelist(proxyURL, bucket string, errCh chan error, fileslist []s
 		}
 
 		wg.Add(1)
-		go tutils.Del(proxyURL, bucket, fn, wg, errCh, true)
+		go tutils.Del(proxyURL, bucket, fn, "", wg, errCh, true)
 	}
 
 	wg.Wait()
