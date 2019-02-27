@@ -397,31 +397,25 @@ type KeepaliveConf struct {
 // config functions
 //
 //==============================
-func LoadConfig(clivars *ConfigCLI) error {
-	var ( // FIXME: remove
-		configFile = clivars.ConfFile
-		statsTime  = clivars.StatsTime
-		proxyURL   = clivars.ProxyURL
-		logLevel   = clivars.LogLevel
-	)
-	config := GCO.BeginUpdate()
+func LoadConfig(clivars *ConfigCLI) (config *Config, changed bool) {
+	config = GCO.BeginUpdate()
 	defer GCO.CommitUpdate(config)
 
-	err := LocalLoad(configFile, &config)
+	err := LocalLoad(clivars.ConfFile, &config)
 	if err != nil {
-		glog.Errorf("Failed to load config %q, err: %v", configFile, err)
+		glog.Errorf("Failed to load config %q, err: %v", clivars.ConfFile, err)
 		os.Exit(1)
 	}
-
 	if err = flag.Lookup("log_dir").Value.Set(config.Log.Dir); err != nil {
 		glog.Errorf("Failed to flag-set glog dir %q, err: %v", config.Log.Dir, err)
+		os.Exit(1)
 	}
 	if err = CreateDir(config.Log.Dir); err != nil {
 		glog.Errorf("Failed to create log dir %q, err: %v", config.Log.Dir, err)
-		return err
+		os.Exit(1)
 	}
 	if err = validateConfig(config); err != nil {
-		return err
+		os.Exit(1)
 	}
 
 	// glog rotate
@@ -431,7 +425,6 @@ func LoadConfig(clivars *ConfigCLI) error {
 		glog.MaxSize = MiB
 	}
 
-	// Set helpers
 	config.Net.HTTP.Proto = "http" // not validating: read-only, and can take only two values
 	if config.Net.HTTP.UseHTTPS {
 		config.Net.HTTP.Proto = "https"
@@ -452,25 +445,30 @@ func LoadConfig(clivars *ConfigCLI) error {
 	}
 
 	// CLI override
-	if statsTime != 0 {
-		config.Periodic.StatsTime = statsTime
+	if clivars.StatsTime != 0 {
+		config.Periodic.StatsTime = clivars.StatsTime
+		changed = true
 	}
-	if proxyURL != "" {
-		config.Proxy.PrimaryURL = proxyURL
+	if clivars.ProxyURL != "" {
+		config.Proxy.PrimaryURL = clivars.ProxyURL
+		changed = true
 	}
-	if logLevel != "" {
-		if err = SetLogLevel(config, logLevel); err != nil {
-			glog.Errorf("Failed to set log level = %s, err: %v", logLevel, err)
+	if clivars.LogLevel != "" {
+		if err = SetLogLevel(config, clivars.LogLevel); err != nil {
+			glog.Errorf("Failed to set log level = %s, err: %v", clivars.LogLevel, err)
+			os.Exit(1)
 		}
-	} else {
-		if err = SetLogLevel(config, config.Log.Level); err != nil {
-			glog.Errorf("Failed to set log level = %s, err: %v", config.Log.Level, err)
-		}
+		config.Log.Level = clivars.LogLevel
+		changed = true
+	} else if err = SetLogLevel(config, config.Log.Level); err != nil {
+		glog.Errorf("Failed to set log level = %s, err: %v", config.Log.Level, err)
+		os.Exit(1)
 	}
+
 	glog.Infof("Logdir: %q Proto: %s Port: %d Verbosity: %s",
 		config.Log.Dir, config.Net.L4.Proto, config.Net.L4.Port, config.Log.Level)
-	glog.Infof("Config: %q StatsTime: %v", configFile, config.Periodic.StatsTime)
-	return err
+	glog.Infof("Config: %q StatsTime: %v", clivars.ConfFile, config.Periodic.StatsTime)
+	return
 }
 
 func ValidateVersion(version string) error {

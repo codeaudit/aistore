@@ -177,7 +177,6 @@ func dryinit() {
 //==================
 func aisinit(version, build string) {
 	var err error
-
 	flag.Parse()
 	cmn.AssertMsg(clivars.role == xproxy || clivars.role == xtarget, "Invalid flag: role="+clivars.role)
 
@@ -185,14 +184,13 @@ func aisinit(version, build string) {
 	if dryRun.size < 1 || err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid object size: %d [%s]\n", dryRun.size, dryRun.sizeStr)
 	}
-
 	if clivars.config.ConfFile == "" {
-		fmt.Fprintf(os.Stderr, "Missing configuration file - must be provided via command line\n")
+		fmt.Fprintf(os.Stderr, "Missing configuration file (must be provided via command line)\n")
 		fmt.Fprintf(os.Stderr, "Usage: ... -role=<proxy|target> -config=<json> ...\n")
 		os.Exit(2)
 	}
-	if err := cmn.LoadConfig(&clivars.config); err != nil {
-		glog.Fatalf("Failed to initialize, config %q, err: %v", clivars.config.ConfFile, err)
+	if config, changed := cmn.LoadConfig(&clivars.config); changed && clivars.persist {
+		cmn.LocalSave(clivars.config.ConfFile, config)
 	}
 	glog.Infof("git: %s | build-time: %s\n", version, build)
 
