@@ -73,6 +73,14 @@ type (
 	ConfigListener interface {
 		ConfigUpdate(oldConf, newConf *Config)
 	}
+	// selected config overrides via command line
+	ConfigCLI struct {
+		ConfFile  string        // config filename
+		LogLevel  string        // takes precedence over config.Log.Level
+		StatsTime time.Duration // overrides config.Periodic.StatsTime
+		ProxyURL  string        // primary proxy URL to override config.Proxy.PrimaryURL
+		ConfJSON  string        // JSON formatted "{name: value, ...}" string to override selected knob(s)
+	}
 )
 
 // globalConfigOwner implements ConfigOwner interface. The implementation is
@@ -389,7 +397,13 @@ type KeepaliveConf struct {
 // config functions
 //
 //==============================
-func LoadConfig(configFile string, statsTime time.Duration, proxyURL string, logLevel string) error {
+func LoadConfig(clivars *ConfigCLI) error {
+	var ( // FIXME: remove
+		configFile = clivars.ConfFile
+		statsTime  = clivars.StatsTime
+		proxyURL   = clivars.ProxyURL
+		logLevel   = clivars.LogLevel
+	)
 	config := GCO.BeginUpdate()
 	defer GCO.CommitUpdate(config)
 

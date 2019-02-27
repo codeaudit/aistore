@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/NVIDIA/aistore/3rdparty/glog"
 	"github.com/NVIDIA/aistore/atime"
@@ -44,15 +43,12 @@ const (
 )
 
 type (
-	cliVars struct {
-		role      string
-		conffile  string
-		loglevel  string
-		statstime time.Duration
-		proxyurl  string
-		ntargets  int
+	CLI struct {
+		role     string        // proxy | target
+		config   cmn.ConfigCLI // selected config overrides
+		ntargets int           // expected number of targets in a starting-up cluster (proxy only)
+		persist  bool          // true: make cmn.ConfigCLI settings permanent, false: leave them transient
 	}
-
 	// daemon instance: proxy or storage target
 	daemon struct {
 		rg *rungroup
@@ -68,7 +64,7 @@ type (
 
 // - selective disabling of a disk and/or network IO.
 // - dry-run is initialized at startup and cannot be changed.
-// - the values can be set via CLI or environment (environment will override CLI).
+// - the values can be set via clivars or environment (environment will override clivars).
 // - for details see README, section "Performance testing"
 type dryRunConfig struct {
 	sizeStr string // random content size used when disk IO is disabled (-dryobjsize/AIS_DRYOBJSIZE)
@@ -84,8 +80,8 @@ type dryRunConfig struct {
 //====================
 var (
 	gmem2      *memsys.Mem2 // gen-purpose system-wide memory manager and slab/SGL allocator (instance, runner)
+	clivars    = &CLI{}
 	ctx        = &daemon{}
-	clivars    = &cliVars{}
 	jsonCompat = jsoniter.ConfigCompatibleWithStandardLibrary
 	dryRun     = &dryRunConfig{}
 )
@@ -129,20 +125,24 @@ func (g *rungroup) run() error {
 }
 
 func init() {
-	// CLI to override ais JSON config
-	flag.StringVar(&clivars.role, "role", "", "role: proxy OR target")
-	flag.StringVar(&clivars.conffile, "config", "", "config filename")
-	flag.StringVar(&clivars.loglevel, "loglevel", "", "glog loglevel")
-	flag.DurationVar(&clivars.statstime, "statstime", 0, "http and capacity utilization statistics log interval")
+	flag.StringVar(&clivars.role, "role", "", "role of this AIS daemon: proxy | target")
+
+	// config itself and its command line overrides
+	flag.StringVar(&clivars.config.ConfFile, "config", "", "config filename")
+	flag.StringVar(&clivars.config.LogLevel, "loglevel", "", "log verbosity level (2 - minimal, 3 - default, 4 - super-verbose)")
+	flag.DurationVar(&clivars.config.StatsTime, "statstime", 0, "stats reporting (logging) interval")
+	flag.StringVar(&clivars.config.ProxyURL, "proxyurl", "", "primary proxy/gateway URL to override local config")
+	flag.StringVar(&clivars.config.ConfJSON, "confjson", "", "JSON formatted \"{name: value, ...}\" string to override selected knob(s)")
+	flag.BoolVar(&clivars.persist, "persist", false, "true: make clivars config settings permanent, false: transient (this run only)")
+
 	flag.IntVar(&clivars.ntargets, "ntargets", 0, "number of storage targets to expect at startup (hint, proxy-only)")
-	flag.StringVar(&clivars.proxyurl, "proxyurl", "", "Override config Proxy settings")
 
 	flag.BoolVar(&dryRun.disk, "nodiskio", false, "if true, no disk operations for GET and PUT")
 	flag.BoolVar(&dryRun.network, "nonetio", false, "if true, no network operations for GET and PUT")
 	flag.StringVar(&dryRun.sizeStr, "dryobjsize", "8m", "in-memory random content")
 }
 
-// dry-run environment overrides dry-run CLI
+// dry-run environment overrides dry-run clivars
 func dryinit() {
 	str := os.Getenv("AIS_NODISKIO")
 	if b, err := strconv.ParseBool(str); err == nil {
@@ -186,13 +186,13 @@ func aisinit(version, build string) {
 		fmt.Fprintf(os.Stderr, "Invalid object size: %d [%s]\n", dryRun.size, dryRun.sizeStr)
 	}
 
-	if clivars.conffile == "" {
+	if clivars.config.ConfFile == "" {
 		fmt.Fprintf(os.Stderr, "Missing configuration file - must be provided via command line\n")
 		fmt.Fprintf(os.Stderr, "Usage: ... -role=<proxy|target> -config=<json> ...\n")
 		os.Exit(2)
 	}
-	if err := cmn.LoadConfig(clivars.conffile, clivars.statstime, clivars.proxyurl, clivars.loglevel); err != nil {
-		glog.Fatalf("Failed to initialize, config %q, err: %v", clivars.conffile, err)
+	if err := cmn.LoadConfig(&clivars.config); err != nil {
+		glog.Fatalf("Failed to initialize, config %q, err: %v", clivars.config.ConfFile, err)
 	}
 	glog.Infof("git: %s | build-time: %s\n", version, build)
 
