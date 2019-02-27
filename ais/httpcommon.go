@@ -377,6 +377,7 @@ func (h *httprunner) init(s stats.Tracker, isproxy bool) {
 
 // initSI initializes this cluster.Snode
 func (h *httprunner) initSI() {
+	var s string
 	config := cmn.GCO.Get()
 	allowLoopback, _ := strconv.ParseBool(os.Getenv("ALLOW_LOOPBACK"))
 	addrList, err := getLocalIPv4List(allowLoopback)
@@ -386,28 +387,37 @@ func (h *httprunner) initSI() {
 
 	ipAddr, err := getipv4addr(addrList, config.Net.IPv4)
 	if err != nil {
-		glog.Fatalf("Failed to get public network address: %v", err)
+		glog.Fatalf("Failed to get PUBLIC IPv4/hostname: %v", err)
 	}
-	glog.Infof("Configured PUBLIC NETWORK address: [%s:%d] (out of: %s)\n", ipAddr, config.Net.L4.Port, config.Net.IPv4)
+	if config.Net.IPv4 != "" {
+		s = " (config: " + config.Net.IPv4 + ")"
+	}
+	glog.Infof("PUBLIC (user) access: [%s:%d]%s", ipAddr, config.Net.L4.Port, s)
 
 	ipAddrIntraControl := net.IP{}
 	if config.Net.UseIntraControl {
 		ipAddrIntraControl, err = getipv4addr(addrList, config.Net.IPv4IntraControl)
 		if err != nil {
-			glog.Fatalf("Failed to get intra control network address: %v", err)
+			glog.Fatalf("Failed to get INTRA-CONTROL IPv4/hostname: %v", err)
 		}
-		glog.Infof("Configured INTRA CONTROL NETWORK address: [%s:%d] (out of: %s)\n",
-			ipAddrIntraControl, config.Net.L4.PortIntraControl, config.Net.IPv4IntraControl)
+		s = ""
+		if config.Net.IPv4IntraControl != "" {
+			s = " (config: " + config.Net.IPv4IntraControl + ")"
+		}
+		glog.Infof("INTRA-CONTROL access: [%s:%d]%s", ipAddrIntraControl, config.Net.L4.PortIntraControl, s)
 	}
 
 	ipAddrIntraData := net.IP{}
 	if config.Net.UseIntraData {
 		ipAddrIntraData, err = getipv4addr(addrList, config.Net.IPv4IntraData)
 		if err != nil {
-			glog.Fatalf("Failed to get intra data network address: %v", err)
+			glog.Fatalf("Failed to get INTRA-DATA IPv4/hostname: %v", err)
 		}
-		glog.Infof("Configured INTRA DATA NETWORK address: [%s:%d] (out of: %s)\n",
-			ipAddrIntraData, config.Net.L4.PortIntraData, config.Net.IPv4IntraData)
+		s = ""
+		if config.Net.IPv4IntraData != "" {
+			s = " (config: " + config.Net.IPv4IntraData + ")"
+		}
+		glog.Infof("INTRA-DATA access: [%s:%d]%s", ipAddrIntraData, config.Net.L4.PortIntraData, s)
 	}
 
 	publicAddr := &net.TCPAddr{

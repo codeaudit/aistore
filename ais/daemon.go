@@ -46,6 +46,7 @@ type (
 	CLI struct {
 		role     string        // proxy | target
 		config   cmn.ConfigCLI // selected config overrides
+		confjson string        // JSON formatted "{name: value, ...}" string to override selected knob(s)
 		ntargets int           // expected number of targets in a starting-up cluster (proxy only)
 		persist  bool          // true: make cmn.ConfigCLI settings permanent, false: leave them transient
 	}
@@ -132,7 +133,7 @@ func init() {
 	flag.StringVar(&clivars.config.LogLevel, "loglevel", "", "log verbosity level (2 - minimal, 3 - default, 4 - super-verbose)")
 	flag.DurationVar(&clivars.config.StatsTime, "statstime", 0, "stats reporting (logging) interval")
 	flag.StringVar(&clivars.config.ProxyURL, "proxyurl", "", "primary proxy/gateway URL to override local config")
-	flag.StringVar(&clivars.config.ConfJSON, "confjson", "", "JSON formatted \"{name: value, ...}\" string to override selected knob(s)")
+	flag.StringVar(&clivars.confjson, "confjson", "", "JSON formatted \"{name: value, ...}\" string to override selected knob(s)")
 	flag.BoolVar(&clivars.persist, "persist", false, "true: make clivars config settings permanent, false: transient (this run only)")
 
 	flag.IntVar(&clivars.ntargets, "ntargets", 0, "number of storage targets to expect at startup (hint, proxy-only)")
@@ -176,7 +177,11 @@ func dryinit() {
 //
 //==================
 func aisinit(version, build string) {
-	var err error
+	var (
+		h           *httprunner
+		err         error
+		confChanged bool
+	)
 	flag.Parse()
 	cmn.AssertMsg(clivars.role == xproxy || clivars.role == xtarget, "Invalid flag: role="+clivars.role)
 
@@ -189,9 +194,8 @@ func aisinit(version, build string) {
 		fmt.Fprintf(os.Stderr, "Usage: ... -role=<proxy|target> -config=<json> ...\n")
 		os.Exit(2)
 	}
-	if config, changed := cmn.LoadConfig(&clivars.config); changed && clivars.persist {
-		cmn.LocalSave(clivars.config.ConfFile, config)
-	}
+	confChanged = cmn.LoadConfig(&clivars.config)
+
 	glog.Infof("git: %s | build-time: %s\n", version, build)
 
 	// init daemon
@@ -206,6 +210,8 @@ func aisinit(version, build string) {
 		p := &proxyrunner{}
 		p.initSI()
 		ctx.rg.add(p, xproxy)
+		h = &p.httprunner
+
 		ps := &stats.Prunner{}
 		ps.Init()
 		ctx.rg.add(ps, xproxystats)
@@ -218,6 +224,8 @@ func aisinit(version, build string) {
 		t := &targetrunner{}
 		t.initSI()
 		ctx.rg.add(t, xtarget)
+		h = &t.httprunner
+
 		ts := &stats.Trunner{T: t} // iostat below
 		ts.Init()
 		ctx.rg.add(ts, xstorstats)
@@ -290,6 +298,30 @@ func aisinit(version, build string) {
 		t.fsprg.Reg(atime)
 	}
 	ctx.rg.add(&sigrunner{}, xsignal)
+
+	// even more config changes, e.g:
+	// -config=/etc/ais.json -role=target -persist=true -confjson="{\"default_timeout\": \"13s\" }"
+	if clivars.confjson != "" {
+		var any map[string]string
+		if err = jsoniter.Unmarshal([]byte(clivars.confjson), &any); err != nil {
+			glog.Errorf("Failed to unmarshal JSON [%s], err: %v", clivars.confjson, err)
+			os.Exit(1)
+		}
+		if len(any) > 0 {
+			confChanged = true
+			for n, v := range any {
+				if errstr := h.setconfig(n, v); errstr != "" {
+					glog.Errorln(errstr)
+					os.Exit(1)
+				}
+			}
+		}
+	}
+	if confChanged && clivars.persist {
+		glog.Infoln("Overriding config from CLI")
+		config := cmn.GCO.Get()
+		cmn.LocalSave(clivars.config.ConfFile, config)
+	}
 }
 
 // Run is the 'main' where everything gets started

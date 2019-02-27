@@ -79,7 +79,6 @@ type (
 		LogLevel  string        // takes precedence over config.Log.Level
 		StatsTime time.Duration // overrides config.Periodic.StatsTime
 		ProxyURL  string        // primary proxy URL to override config.Proxy.PrimaryURL
-		ConfJSON  string        // JSON formatted "{name: value, ...}" string to override selected knob(s)
 	}
 )
 
@@ -397,8 +396,8 @@ type KeepaliveConf struct {
 // config functions
 //
 //==============================
-func LoadConfig(clivars *ConfigCLI) (config *Config, changed bool) {
-	config = GCO.BeginUpdate()
+func LoadConfig(clivars *ConfigCLI) (changed bool) {
+	config := GCO.BeginUpdate()
 	defer GCO.CommitUpdate(config)
 
 	err := LocalLoad(clivars.ConfFile, &config)
@@ -464,7 +463,6 @@ func LoadConfig(clivars *ConfigCLI) (config *Config, changed bool) {
 		glog.Errorf("Failed to set log level = %s, err: %v", config.Log.Level, err)
 		os.Exit(1)
 	}
-
 	glog.Infof("Logdir: %q Proto: %s Port: %d Verbosity: %s",
 		config.Log.Dir, config.Net.L4.Proto, config.Net.L4.Port, config.Log.Level)
 	glog.Infof("Config: %q StatsTime: %v", clivars.ConfFile, config.Periodic.StatsTime)
